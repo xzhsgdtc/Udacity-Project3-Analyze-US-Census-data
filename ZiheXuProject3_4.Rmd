@@ -1,0 +1,690 @@
+---
+title: "ZiheXuProject_3 US census data"
+output: html_document
+---
+
+# Abstract 
+
+As a science major Ph.D. student, I have heard many rumors saying that it is useless
+and simply waste of time to get a Ph.D because many successful people don't have a 
+Ph.D. So I decided to take a look at this matter and ask some questions like:
+
+1. How much someone earns with different level and type of degree?
+2. What's the unemployment for different level and type of degree?
+3. What state has the lowest unemployment rate for different level and type of degree?
+
+To answer these questions, I use the US census data with the kaggle. Here attached a link
+about the data description and the dictionary
+
+* [Data Description](https://www.kaggle.com/c/2013-american-community-survey/data)
+
+* [Data Dictionary](http://www2.census.gov/programs-surveys/acs/tech_docs/pums/data_dict/PUMSDataDict13.txt)
+
+# The US Census data 
+Every year, the US Census Bureau runs the American Community Survey, which about 3.5 million
+households are asked detailed questions about who they are and how is their life. There are
+two part of the data: Housing and Population, here because the questions I asked related to
+a person, so I choose to use the population data. This is a huge data set as giving in the 
+link below, It's too big to upload so I choose to show my work under the kaggle's Scripts. 
+
+* [Download Census Data](https://www.kaggle.com/c/2013-american-community-survey/download/data.zip)
+
+
+## Setup libraries
+Libraries I used for analyze
+```{r, message=FALSE, warning=FALSE}
+library("plyr")
+library("dplyr")
+library("data.table")
+library("ggplot2")
+library("choroplethr")
+library("scales")
+```
+## Read the data
+Here I will read the data and save the columns that interesting to me like 
+
+* "PINCP": Total person's income 
+* "SCHL": School level: 21:Bachelor, 22:Masters, 24:Ph.D.
+* "SEX": 1:Male, 2:female
+* "ST": Different State
+* "AGEP": Age from 0 to 99
+* "ESR": Employment status: 3:unemployment
+* "SCIENGP": Degree Flag: 1:Science/Engineering fields 2:Not in S/E fields
+* "SCIENGRLP": Degree Flag2: 1:S/E related fields 2:Not in S/E related fields
+
+We know that Science/Engineering degree are most degree obtained in a science/engineering 
+department:
+
+The S/E related fields includes those degrees that has core course in science department
+like nurse, physician, surgeon etc.
+
+```{r}
+reRead <- 2
+#read in data and save it in populData.RData
+if(reRead==1){
+  colsToKeep <- c("PINCP", "SCHL", "ESR","SCIENGP", "ST","SEX","AGEP","SCIENGRLP")
+  popDataA <- fread("../input/pums/ss13pusa.csv", select=colsToKeep )  
+  popDataB <- fread("../input/pums/ss13pusb.csv", select=colsToKeep )
+  populData <- rbind(popDataA, popDataB)
+  rm(popDataA, popDataB)
+  save(populData, file="populData.RData")
+  summary(populData)
+  nrow(populData)
+  head(populData,5)
+}else{
+  load("populData.RData")
+} 
+```
+We can find many NAs in the SCIENGP and SCIENGRLP since not everyone has a Bachelor's
+degree or higher, so next step I will take the populData and omit all NAs. and filter 
+that data by SCHL where I will only select people with Bachelor,Mater and Ph.D. degrees.
+There are two flags to indicate the type of one's degree. I combine these two flags to 
+one single column SciEng since there is only little overlap between Science/Engineering and 
+Science/Engineering related field, I use a simple equation to map two flag to one SciEng
+If someone's degree is in Science/Engineering, SciEng =2, if they are in Sci/Eng related 
+SciEng = 1, others will have SciEng = 0.
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE}
+populData <- tbl_df(populData) 
+#Select people who holds at least Bachelor's degree and omit all data with NAs.
+ds <-  populData %>%  
+       na.omit() %>%
+       filter(SCHL %in%  c(21,22,24)) %>%
+       group_by(SCHL) 
+rm(populData)
+
+#ds<-head(ds,1000)
+ds$SciEng <- ((2-ds$SCIENGP)*2 +2- ds$SCIENGRLP)%%3
+
+summary(ds)
+nrow(ds)
+```
+
+By simply looking at the summary of the data, we can find some interesting results for
+the group of people that hold a degree of Bachelor or higher:
+
+1. Total number of the record is 638002
+2. The average age of this group is 49
+3. The youngest one is 19 and the oldest is 95
+4. There are slightly more female than male
+5. The Median income is 46000 and the Average income is 63149
+6. Most people hold a none Science&Engineering degree
+
+```{r, echo=FALSE}
+#Add proper name to corresponding columns
+degreeCode = "SCHL,DegLevel
+21,Bachelor
+22,MS
+24,Ph.D."
+degreCodes <- fread(degreeCode) 
+
+sexCode = "SEX,sex
+1,Male
+2,female"
+sexCode <- fread(sexCode) 
+
+degreeType = "SciEng,DType
+0,Other
+1,S&ERelated
+2,S&E"
+degreeType <- fread(degreeType)  
+```
+
+Now I am adding names to corresponding columns and set the order of degree as 
+Bachelor,Master and Doctorate
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE}
+#Add names for degree,sex,type
+ds <- left_join(ds , degreCodes, by.x=c("SCHL"))
+ds <- left_join(ds , sexCode, by.x=c("SEX"))
+ds <- left_join(ds , degreeType, by.x=c("SciEng"))
+
+ds$DegLevel <- ordered(ds$DegLevel,levels = c('Bachelor','MS','Ph.D.'))
+head(ds,10)
+nrow(ds)
+ds$AGEP <- as.numeric(ds$AGEP)
+```
+
+## Analyze with single factors
+First I simply plot the histogram of different factors in the group of degree holders
+
+```{r, echo=FALSE}
+#hitorgram of sex
+ggplot(ds, aes(x= factor(sex)))+
+    geom_histogram(colour="black", aes(fill=ds$sex))+ 
+    scale_fill_hue(l=80)+
+    theme(panel.background = element_rect(fill = 'white' )) +
+    scale_y_continuous(labels = comma)+
+    ggtitle("Total female and male in Degrees Holders")  
+count(ds,sex)
+```
+
+female has a slightly higher number of degree hodlers 
+
+```{r, echo=FALSE}
+#hitorgram of DegLevel
+ggplot(ds, aes(x= factor(DegLevel)))+
+    geom_histogram(colour="black", aes(fill=ds$DegLevel))+
+    scale_fill_hue(l=80)+
+    theme(panel.background = element_rect(fill = 'white' )) +
+    scale_y_continuous(labels = comma)+
+    ggtitle("counts of degree levels in Degrees Holders")
+count(ds,DegLevel)
+```
+
+There are a lot of Bachelors and very few mount of Ph.Ds.
+
+```{r, echo=FALSE}
+#hitorgram of Degree type
+ggplot(ds, aes(x= factor(DType)))+
+    geom_histogram(colour="black", aes(fill=ds$DType))+
+    scale_fill_hue(l=80)+
+    theme(panel.background = element_rect(fill = 'white' )) +
+    scale_y_continuous(labels = comma)+
+    ggtitle("Counts of degree type  in Degrees Holders")  
+count(ds,DType)
+```
+
+More people have a degree that not in science/engineering. 
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE}
+#hitorgram of Age
+ggplot(ds, aes(x=AGEP))+
+    geom_histogram(binwidth=1,colour="black", fill="grey")+
+    scale_x_discrete(breaks = seq(20, 100, by = 5)) +
+    theme(panel.background = element_rect(fill = 'white' )) +
+    scale_y_continuous(labels = comma)+
+    ggtitle("Age distribution in Degrees Holders") 
+
+#hitorgram + density plot 
+ggplot(ds, aes(x=AGEP))+
+    geom_histogram(aes(y=..density..),binwidth=3,colour="black",fill="grey")+
+    geom_density(alpha=.2, fill="#FF6666")+
+    scale_x_discrete(breaks = seq(20, 100, by = 5)) +
+    theme(panel.background = element_rect(fill = 'white' )) +
+    scale_y_continuous(labels = comma)+
+    ggtitle("Age density in Degrees Holders")  
+```
+
+We can find that the total number of degree holders are evenly distributed between 25 - 65 
+and gradually decrease, as the total number of people are decreasing after 65 years old.
+A small increase at the end of 95 is because the US census data has a age cut off at 99
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(ds, aes(x=AGEP))+
+    geom_histogram(binwidth=3,colour="black",aes(fill=ds$DType),position ="fill")+
+    scale_x_discrete(breaks = seq(20, 100, by = 10)) +
+    theme(panel.background = element_rect(fill = 'white' )) +
+    scale_y_continuous(labels = comma)+
+    geom_density(alpha =0.8)+
+    facet_wrap(~sex)
+    ggtitle("Age vs type of Degrees")  
+```
+
+From this graph, we can see that there are more women getting into S/E fields. 
+
+## Analyze with multiple factors
+
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(ds,aes(AGEP))+
+    geom_freqpoly(aes(group = DType,color = DType))+
+    theme(panel.background = element_rect(fill = 'white' ))+
+    ggtitle("Three types of degree Holders by age ")  
+
+```
+
+This shows no clear relation between age and their degree type. There are some 
+fluctuations. Also it seems all three type of degree holders increasing and 
+deceasing at the same time.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(ds,aes(AGEP))+
+    geom_freqpoly(aes(group = DegLevel,color = DegLevel))+
+    theme(panel.background = element_rect(fill = 'white' ))+
+    ggtitle("Three leveles of degree Holders by age ")  
+```
+
+This graph shows clearly that MSs and Ph.D. have their first peak at the right of 
+Bachelors, simply because they need to take more years to get a MS and PhD.
+
+# Is it worth to get a degree?
+Now we have basic statistics about the US census data, we know there are many people
+have Bachelor's degree. More people holding a non-Science/Engineering degree. 
+Is it the more the better? 
+
+
+To answer this question, let's break it into Three questions.
+* What salary I can expected with certain degree? 
+* What's the unemployment rate for different degrees? 
+* Where should I find a job?
+
+
+## How much can you earn if you have certain degree BSc,MS,PhD, Science/Engineering?
+
+Here I filter the income data which only take an income larger than 1000 into account.
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE}
+
+ds <- ds %>%
+                 filter(PINCP>1000)
+ggplot(ds, aes(factor(DegLevel), PINCP))+
+    theme(panel.background = element_rect(fill = 'white' )) +
+    geom_boxplot()
+```
+
+Here we find there are a lot of outliers that earns 10 times more than others.
+I then try to use a log scale
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(ds, aes(factor(DegLevel), PINCP))+
+    theme(panel.background = element_rect(fill = 'white' )) +
+    geom_boxplot()+
+    scale_y_log10()
+```
+
+Here I take Degree type into consideration.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(ds, aes(factor(DegLevel), PINCP))+
+    geom_boxplot(aes(fill = factor(DType)))+    
+    theme(panel.background = element_rect(fill = 'white' )) +
+    scale_y_log10()
+```
+
+
+```{r ,echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(ds, aes(PINCP,color=DegLevel))+
+    geom_density() +
+    theme(panel.background = element_rect(fill = 'white' )) +
+    scale_x_continuous(limits = quantile(ds$PINCP,c(0,0.98)),labels = comma)+
+    ggtitle("Comparing Income of Degrees Holders")
+```
+
+In this density plot, we found the MS and Ph.D. have similar peak around $65,000 
+Bachelors' income has a even distribution between 20,000 to 50,000 and decrease faster
+than MS and Ph.D. 
+
+```{r ,echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(ds, aes(PINCP,color=DegLevel))+
+    geom_density() +
+    theme(panel.background = element_rect(fill = 'white' )) +
+    scale_x_continuous(limits = quantile(ds$PINCP,c(0,0.95)),labels = comma)+
+    ggtitle("Comparing Income of Degrees Holders")+
+    facet_wrap(~DType,ncol=1)
+```
+
+In the last graph about income, we found all three type of degree follows the same pattern
+one different I noticed is that if you hold a degree in the S/E related field, you will 
+have a much beeter chance to get a salary larger than $100,000.
+
+Now we know, a higher degree in S/E or S/E related fields will reward you most financially
+Another question fellows:"Which one has a smaller unemployment rate and where should I get a job?"
+
+## What's the unemployment rate for different degrees?
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+degreeHolders <-  summarise(ds, count=n())
+degreeHolders <- left_join(degreeHolders , degreCodes, by.x=c("SCHL"))
+Degrees <- factor(degreeHolders$DegLevel, 
+                    levels = unique(degreeHolders$DegLevel))
+
+#  Filter unemployed, group them by degree and calculate rates:
+jobLess <- ds %>%
+           filter(ESR==3)%>% #3 indicates  Unemployed
+           group_by(SCHL) %>% 
+           summarise(count=n())%>%
+           mutate(Percet = count/degreeHolders$count*100)
+```           
+
+This graph clearly shows that higher degree levels have lower unemployment rates.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(jobLess, aes(x= Degrees , y=jobLess$Percet, fill= Degrees)) +                        
+       geom_bar(stat="identity") + scale_fill_hue(l=80) +
+       ylab("Percent %") + 
+       xlab("Degree") + 
+       ggtitle("Percentages of Unemployed Degree  Holders")+
+       theme(axis.text.x = element_text(angle = 30, hjust = 1),
+       panel.background = element_rect(fill = 'white' ))
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Map state number to region
+stateCodeCSV = "ST,region
+001,alabama
+002,alaska
+004,arizona
+005,arkansas
+006,california
+008,colorado
+009,connecticut
+010,delaware
+011,district of columbia
+012,florida
+013,georgia
+015,hawaii
+016,idaho
+017,illinois
+018,indiana
+019,iowa
+020,kansas
+021,kentucky
+022,louisiana
+023,maine
+024,maryland
+025,massachusetts
+026,michigan
+027,minnesota
+028,mississippi
+029,missouri
+030,montana
+031,nebraska
+032,nevada
+033,new hampshire
+034,new jersey
+035,new mexico
+036,new york
+037,north carolina
+038,north dakota
+039,ohio
+040,oklahoma
+041,oregon
+042,pennsylvania
+044,rhode island
+045,south carolina
+046,south dakota
+047,tennessee
+048,texas
+049,utah
+050,vermont
+051,virginia
+053,washington
+054,west virginia
+055,wisconsin
+056,wyoming"
+stateCodes <- fread(stateCodeCSV)
+```
+
+## Unemployment rate in each state for different degree holders.
+Now take a look at a the unemployment data in different state, 
+depending on your degree level and degree type, you can choose which state to go to. 
+
+
+```{r, message =FALSE,echo=FALSE}
+stateTotalOther  <- ds%>%
+                  filter(SciEng==0)%>%
+                  group_by(ST)%>%
+                  summarise(count = n())
+jobLessOther  <- ds%>%
+               filter(SciEng==0, ESR==3)%>%
+               group_by(ST)%>%
+               summarise(count = n())
+
+jobLessOther <- right_join(jobLessOther , stateCodes, by.x=c("ST"))
+jobLessOther[is.na(jobLessOther)] <- 0
+jobLessOther <- mutate(jobLessOther, 
+                value = jobLessOther$count/stateTotalOther$count*100)
+
+```
+
+For a None-S/E degree holder, CA,NV ,NY have highest Unemployment rates. 
+
+```{r, echo=FALSE,fig.width=10,fig.height=8}
+#Draw the Unemployment rate on the map with 8 levels 
+state_choropleth(jobLessOther, 
+    title = "Percentage of Unemployment with none-S/E degree", num_colors=8)
+```
+
+
+```{r, message =FALSE,echo=FALSE}
+stateTotalSEr  <- ds%>%
+                  filter(SciEng==1)%>%
+                  group_by(ST)%>%
+                  summarise(count = n())
+                  
+jobLessSEr  <- ds%>%
+               filter(SciEng==1, ESR==3)%>%
+               group_by(ST)%>%
+               summarise(count = n())
+
+jobLessSEr <- right_join(jobLessSEr , stateCodes, by.x=c("ST"))
+jobLessSEr[is.na(jobLessSEr)] <- 0
+jobLessSEr <- mutate(jobLessSEr, 
+    value = jobLessSEr$count/stateTotalSEr$count*100)
+
+```
+
+For a S/E related degree holder, CO,OK,GA,NY have the highest unemployment rates.
+It's generally lower than the None-S/E degree holders
+
+```{r, echo=FALSE,fig.width=10,fig.height=8}
+#Draw the Unemployment rate on the map with 8 levels 
+state_choropleth(jobLessSEr, 
+    title = "Percentage of Unemployment with S/E related degree", 
+    num_colors=8)
+```
+
+```{r, message =FALSE}
+stateTotalSE  <- ds%>%
+                  filter(SciEng==2)%>%
+                  group_by(ST)%>%
+                  summarise(count = n())
+
+jobLessSE  <- ds%>%
+               filter(SciEng==2, ESR==3)%>%
+               group_by(ST)%>%
+               summarise(count = n())
+
+jobLessSE <- right_join(jobLessSE , stateCodes, by.x=c("ST"))
+jobLessSE[is.na(jobLessSE)] <- 0
+jobLessSE <- mutate(jobLessSE, 
+                    value = jobLessSE$count/stateTotalSE$count*100)
+
+```
+
+For a S/E degree holder, CA,OR,NY,MI have the highest Unemployment rates. 
+It's a little bit higher than the S/E related, but lower than the non-S/E.
+
+```{r, echo=FALSE,fig.width=10,fig.height=8}
+#Draw the Unemployment rate on the map with 8 levels 
+state_choropleth(jobLessSE, 
+    title = "Percentage of Unemployment with S/E degree holders",
+    num_colors=8)
+```
+
+### unemployment rate with people who have a S/E related degree 
+For me I am working on my a S/E degree, therefore I am very interested in where 
+should I get a job and does it matters if I get a  Bachelor, Master or Ph.D. 
+
+
+```{r, message =FALSE,echo=FALSE}
+stateTotalSE  <- ds%>%
+                  filter(SciEng==2)%>%
+                  group_by(ST)%>%
+                  summarise(count = n())
+
+jobLessSE  <- ds%>%
+               filter(SciEng==2,ESR==3,SCHL==21)%>%
+               group_by(ST)%>%
+               summarise(count = n())
+
+jobLessSE <- right_join(jobLessSE , stateCodes, by.x=c("ST"))
+jobLessSE[is.na(jobLessSE)] <- 0
+jobLessSE <- mutate(jobLessSE, 
+                    value = jobLessSE$count/stateTotalSE$count*100)
+```
+
+```{r, echo=FALSE,fig.width=10,fig.height=8}
+state_choropleth(jobLessSE, 
+    title = "Percentage of Unemployment with Bachelor degree in S/E", 
+    num_colors=8)
+```
+
+```{r, message =FALSE,echo=FALSE}
+stateTotalSE  <- ds%>%
+                  filter(SciEng==2)%>%
+                  group_by(ST)%>%
+                  summarise(count = n())
+jobLessSE  <- ds%>%
+               filter(SciEng==2, ESR==3,SCHL==22)%>%
+               group_by(ST)%>%
+               summarise(count = n())
+
+jobLessSE <- right_join(jobLessSE , stateCodes, by.x=c("ST"))
+jobLessSE[is.na(jobLessSE)] <- 0
+jobLessSE <- mutate(jobLessSE, 
+                    value = jobLessSE$count/stateTotalSE$count*100)
+
+```
+
+```{r, echo=FALSE,fig.width=10,fig.height=8}
+state_choropleth(jobLessSE, 
+    title = "Percentage of Unemployment with Master degree in S/E",
+    num_colors=8)
+```
+
+```{r, message =FALSE,echo=FALSE}
+stateTotalSE  <- ds%>%
+                  filter(SciEng==2)%>%
+                  group_by(ST)%>%
+                  summarise(count = n())
+jobLessSE  <- ds%>%
+               filter(SciEng==2, ESR==3,SCHL==24)%>%
+               group_by(ST)%>%
+               summarise(count = n())
+
+jobLessSE <- right_join(jobLessSE , stateCodes, by.x=c("ST"))
+jobLessSE[is.na(jobLessSE)] <- 0
+jobLessSE <- mutate(jobLessSE, 
+                    value = jobLessSE$count/stateTotalSE$count*100)
+
+```
+
+```{r, echo=FALSE,fig.width=10,fig.height=8}
+state_choropleth(jobLessSE, 
+    title = "Percentage of Unemployment with Ph.D degree in S/E"
+    , num_colors=8)
+```
+
+From these three graph I found not surprisingly, PhDs have a much lower rate of
+unemployment. and generally, CA,OR,MI,NY have a higher unemployment rates.
+One surprise I get is that for state ND, if you have either a master or bachelor,
+you will have a relative low unemployment rate, but if you have a Ph.D. 
+You will have a very higher unemployment rate. I don't know why yet. 
+
+
+
+# Final Plots and Summary
+
+### Plot One
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(ds,aes(DegLevel,fill=sex)) +geom_bar()+
+    facet_wrap(~DType)+
+    theme(panel.background = element_rect(fill = 'white' )) +
+    scale_y_continuous(labels = comma)+
+    xlab("Degree Level")+
+    ylab("Total number of people")+
+    scale_fill_hue(l=80)+
+    ggtitle("Degree Holders type/level/sex")  
+```
+#### Reason 
+This charts contains most of the informaion of the properteies that interested to me and possiblely to anyone
+who want to know what is the current status about the degree holders.It shows all that informaiton in a 
+straitforward way.In this charts, people can choose any topic he/she is intereted and could find the result from it.
+
+
+We can find many interesting things in this single graph 
+1. In every field, Ph.Ds are much less than Bachelors and Masters. 
+2. More people hold a none-S/E degree 
+2. Women has higher percentage in the none-S/E area.
+3. Men holds more S/E degrees. 
+4. Women holds much more degree in S/E related field, it is reasonable since a large portion of science related
+degree is nurse. 
+
+
+### Plot Two  
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#outlier.shape = NA to hide the outlier and scale x axis using quantile. 
+ggplot(ds, aes(factor(DegLevel), PINCP))+
+    geom_boxplot(outlier.shape = NA,aes(fill = factor(DType))) +
+    scale_y_continuous(limits = c(0,105000),labels = comma)+
+    scale_fill_hue(l=80)+
+    theme(panel.background = element_rect(fill = 'white' )) +
+    ylab("Personal Income")+
+    ggtitle("Comparing Income of Degrees Holders")+
+    xlab("degree Level")
+ ```
+#### Reason 
+This charts answers the question about which type of the degree has the highest financial reward. It not only 
+shows the average but also the 25,75 % so we can come up a conclusion more easily. 
+
+
+
+From this graph above, we can clear see that Science/Engineering degree 
+have a higher income with the same degree level. Science and Engineering related degree
+have similar income range with the S/E degree. They both higher than non S/E degree.
+Another observation is that Ph.D.'s income is higher than MS and MS is higher than Bachelors
+in all three type of degrees. So a Ph.D. degree in S/E is rewarding financially most. 
+
+Now I am thinking about getting an Ph.D. in S/E field, where should I go to work?
+
+### Plot Three 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,fig.width=10,fig.height=8}
+stateTotalSE  <- ds%>%
+                  filter(SciEng==2)%>%
+                  group_by(ST)%>%
+                  summarise(count = n())
+jobLessSE  <- ds%>%
+               filter(SciEng==2, ESR==3)%>%
+               group_by(ST)%>%
+               summarise(count = n())
+
+jobLessSE <- right_join(jobLessSE , stateCodes, by.x=c("ST"))
+jobLessSE[is.na(jobLessSE)] <- 0
+jobSE <- mutate(jobLessSE, 
+                    value = (1-jobLessSE$count/stateTotalSE$count)*100)
+                    
+state_choropleth(jobSE, 
+    title = "Percentage of employment with Ph.D degree in S/E"
+    , num_colors=8)
+```
+
+#### Reason 
+This graph can give people a easy way to figuer out which state has the highest employment rate for the S/E Ph.Ds
+I choose this graph becasue I am pursuing a Ph.D. degree in U.S. right now and what to see if I get the Ph.D. Which state would give me a higher change to get employed. It is a narrow down prosess and answers my own question using the data.
+
+From this graph, you can see if you have a Ph.D. degree in S/E, you will have a very high
+chance to get a job in WY,SD,NE,KS and OK. 
+CA,OR,MI,IL,NY might not be a good choice. 
+
+### Reflection 
+The project begins with a simple question about wether it is worth to get a Ph.D,
+and then compares different types of degrees to see what kind of Ph.D worth most. 
+
+The US censor data give us the 
+I choose to run on the Script by Kaggle, at first it goes well, 
+however as the code builds it takes several minutes to get a single run. 
+Which takes me a long time to debug. The data is very clean, 
+it saves a lot of time for cleaning for instance, when I choose degree level = 21,22,24,
+and then draw the histogram of age, the youngest is 19 which is reasonable.  
+It does have many NAs about 1/4 of the total population doesn’t have a Bachelor or higher degree.
+
+### Future work,
+* One might take a look at how those people without a college degree performs in the society.  
+* Try to answser why ND is different, it has relatively very high unemployment rate for S/E Ph.D. 
+But a very low unemployment rate for S/E Bachelors and Masters. 
+* Study for specific type of degrees like MS in Computer Science, Ph.D in physics etc. 
+
+
+
+
+
+
+
+
